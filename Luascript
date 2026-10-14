@@ -1,0 +1,1168 @@
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+
+local player = Players.LocalPlayer
+local blockData = player:WaitForChild("Data")
+
+-- Настройки по умолчанию
+local GRID_SIZE = 28 -- Размер сетки (28x28 = до 784 блоков)
+local USE_SCALING = false
+local isBuilding = false
+
+-- Приоритет блоков из твоего инвентаря
+local BLOCK_PRIORITY = {
+	"PlasticBlock", "SmoothWoodBlock", "WoodBlock", "TitaniumBlock",
+	"ConcreteBlock", "MetalBlock", "BrickBlock", "MarbleBlock",
+	"StoneBlock", "SandBlock", "FabricBlock", "ObsidianBlock",
+	"GoldBlock", "IceBlock", "CoalBlock", "GrassBlock", "RustedBlock"
+}
+
+-- Выбор родителя для GUI
+local guiParent = player:WaitForChild("PlayerGui")
+pcall(function()
+	if gethui then
+		guiParent = gethui()
+	elseif game:GetService("CoreGui") then
+		guiParent = game:GetService("CoreGui")
+	end
+end)
+
+if guiParent:FindFirstChild("BABFTServerImageBuilder") then
+	guiParent.BABFTServerImageBuilder:Destroy()
+end
+
+-- Интерфейс
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "BABFTServerImageBuilder"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = guiParent
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 300, 0, 240)
+mainFrame.Position = UDim2.new(0.5, -150, 0.25, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 10)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -16, 0, 26)
+title.Position = UDim2.new(0, 8, 0, 6)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 14
+title.Text = "BABFT Авто-Билдер v2 (Без EditableImage)"
+title.Parent = mainFrame
+
+local urlBox = Instance.new("TextBox")
+urlBox.Size = UDim2.new(1, -16, 0, 32)
+urlBox.Position = UDim2.new(0, 8, 0, 36)
+urlBox.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+urlBox.TextColor3 = Color3.fromRGB(240, 240, 240)
+urlBox.PlaceholderText = "Прямая ссылка на .jpg / .png..."
+urlBox.Font = Enum.Font.Gotham
+urlBox.TextSize = 12
+urlBox.Text = "https://i.postimg.cc/GprcG09X/preview.jpg"
+urlBox.ClearTextOnFocus = false
+urlBox.TextTruncate = Enum.TextTruncate.AtEnd
+urlBox.Parent = mainFrame
+Instance.new("UICorner", urlBox).CornerRadius = UDim.new(0, 6)
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -16, 0, 32)
+statusLabel.Position = UDim2.new(0, 8, 0, 72)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextColor3 = Color3.fromRGB(255, 215, 90)
+statusLabel.Font = Enum.Font.GothamMedium
+statusLabel.TextSize = 11
+statusLabel.TextWrapped = true
+statusLabel.Text = "Встань на своей базе и нажми Построить"
+statusLabel.Parent = mainFrame
+
+local buildBtn = Instance.new("TextButton")
+buildBtn.Size = UDim2.new(0.65, -10, 0, 36)
+buildBtn.Position = UDim2.new(0, 8, 0, 108)
+buildBtn.BackgroundColor3 = Color3.fromRGB(45, 175, 90)
+buildBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+buildBtn.Font = Enum.Font.GothamBold
+buildBtn.TextSize = 13
+buildBtn.Text = "Построить (Сервер)"
+buildBtn.Parent = mainFrame
+Instance.new("UICorner", buildBtn).CornerRadius = UDim.new(0, 6)
+
+local stopBtn = Instance.new("TextButton")
+stopBtn.Size = UDim2.new(0.35, -10, 0, 36)
+stopBtn.Position = UDim2.new(0.65, 2, 0, 108)
+stopBtn.BackgroundColor3 = Color3.fromRGB(190, 60, 60)
+stopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+stopBtn.Font = Enum.Font.GothamBold
+stopBtn.TextSize = 13
+stopBtn.Text = "Стоп"
+stopBtn.Parent = mainFrame
+Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(0, 6)
+
+local scaleToggleBtn = Instance.new("TextButton")
+scaleToggleBtn.Size = UDim2.new(1, -16, 0, 28)
+scaleToggleBtn.Position = UDim2.new(0, 8, 0, 152)
+scaleToggleBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+scaleToggleBtn.TextColor3 = Color3.fromRGB(230, 230, 240)
+scaleToggleBtn.Font = Enum.Font.GothamMedium
+scaleToggleBtn.TextSize = 12
+scaleToggleBtn.Text = "Размер блока: Стандарт 2x2 (Без рулетки)"
+scaleToggleBtn.Parent = mainFrame
+Instance.new("UICorner", scaleToggleBtn).CornerRadius = UDim.new(0, 6)
+
+scaleToggleBtn.MouseButton1Click:Connect(function()
+	USE_SCALING = not USE_SCALING
+	if USE_SCALING then
+		scaleToggleBtn.Text = "Размер блока: Мини 1x1 (Нужна рулетка)"
+		scaleToggleBtn.BackgroundColor3 = Color3.fromRGB(65, 115, 200)
+	else
+		scaleToggleBtn.Text = "Размер блока: Стандарт 2x2 (Без рулетки)"
+		scaleToggleBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+	end
+end)
+
+local minusBtn = Instance.new("TextButton")
+minusBtn.Size = UDim2.new(0, 36, 0, 28)
+minusBtn.Position = UDim2.new(0, 8, 0, 190)
+minusBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 58)
+minusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minusBtn.Font = Enum.Font.GothamBold
+minusBtn.TextSize = 16
+minusBtn.Text = "-"
+minusBtn.Parent = mainFrame
+Instance.new("UICorner", minusBtn).CornerRadius = UDim.new(0, 6)
+
+local sizeLabel = Instance.new("TextLabel")
+sizeLabel.Size = UDim2.new(1, -96, 0, 28)
+sizeLabel.Position = UDim2.new(0, 48, 0, 190)
+sizeLabel.BackgroundTransparency = 1
+sizeLabel.TextColor3 = Color3.fromRGB(210, 210, 225)
+sizeLabel.Font = Enum.Font.GothamMedium
+sizeLabel.TextSize = 12
+sizeLabel.Text = "Сетка: " .. GRID_SIZE .. "x" .. GRID_SIZE .. " (до " .. (GRID_SIZE * GRID_SIZE) .. " бл.)"
+sizeLabel.Parent = mainFrame
+
+local plusBtn = Instance.new("TextButton")
+plusBtn.Size = UDim2.new(0, 36, 0, 28)
+plusBtn.Position = UDim2.new(1, -44, 0, 190)
+plusBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 58)
+plusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+plusBtn.Font = Enum.Font.GothamBold
+plusBtn.TextSize = 16
+plusBtn.Text = "+"
+plusBtn.Parent = mainFrame
+Instance.new("UICorner", plusBtn).CornerRadius = UDim.new(0, 6)
+
+minusBtn.MouseButton1Click:Connect(function()
+	GRID_SIZE = math.max(12, GRID_SIZE - 4)
+	sizeLabel.Text = "Сетка: " .. GRID_SIZE .. "x" .. GRID_SIZE .. " (до " .. (GRID_SIZE * GRID_SIZE) .. " бл.)"
+end)
+
+plusBtn.MouseButton1Click:Connect(function()
+	GRID_SIZE = math.min(64, GRID_SIZE + 4)
+	sizeLabel.Text = "Сетка: " .. GRID_SIZE .. "x" .. GRID_SIZE .. " (до " .. (GRID_SIZE * GRID_SIZE) .. " бл.)"
+end)
+
+-- HTTP-загрузка с заголовками браузера
+local function httpFetch(url)
+	local req = request or http_request or (http and http.request) or (syn and syn.request)
+	if req then
+		local ok, res = pcall(function()
+			return req({
+				Url = url,
+				Method = "GET",
+				Headers = {
+					["User-Agent"] = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36",
+					["Accept"] = "image/png,image/jpeg,image/bmp,image/*,*/*;q=0.8"
+				}
+			})
+		end)
+		if ok and res and res.Body and #res.Body > 64 then
+			return res.Body
+		end
+	end
+
+	local ok2, res2 = pcall(function()
+		return game:HttpGet(url)
+	end)
+	if ok2 and res2 and #res2 > 64 then
+		return res2
+	end
+	return nil
+end
+
+-- ==========================================
+-- 1. ПОЛНЫЙ ДЕКОДЕР PNG (С ZLIB DEFLATE)
+-- ==========================================
+local function inflateZlib(idat)
+	local pos = 3 -- Пропускаем 2 байта заголовка zlib
+	local flg = string.byte(idat, 2) or 0
+	if bit32.band(flg, 0x20) ~= 0 then
+		pos = 7
+	end
+
+	local bitBuf = 0
+	local bitCnt = 0
+	local dataLen = #idat
+
+	local function readBits(n)
+		while bitCnt < n do
+			if pos > dataLen then return 0 end
+			local b = string.byte(idat, pos)
+			pos += 1
+			bitBuf = bitBuf + b * (2 ^ bitCnt)
+			bitCnt += 8
+		end
+		local mask = 2 ^ n
+		local val = bitBuf % mask
+		bitBuf = math.floor(bitBuf / mask)
+		bitCnt -= n
+		return val
+	end
+
+	local function buildHuffman(lengths, maxSym)
+		local blCount = {}
+		local maxBits = 0
+		for i = 0, maxSym do
+			local len = lengths[i] or 0
+			if len > 0 then
+				blCount[len] = (blCount[len] or 0) + 1
+				if len > maxBits then maxBits = len end
+			end
+		end
+
+		local nextCode = {}
+		local code = 0
+		blCount[0] = 0
+		for bits = 1, maxBits do
+			code = (code + (blCount[bits - 1] or 0)) * 2
+			nextCode[bits] = code
+		end
+
+		local tree = {}
+		for n = 0, maxSym do
+			local len = lengths[n] or 0
+			if len > 0 then
+				local c = nextCode[len]
+				nextCode[len] = c + 1
+				if not tree[len] then tree[len] = {} end
+				tree[len][c] = n
+			end
+		end
+		return tree, maxBits
+	end
+
+	local function decodeSym(tree, maxBits)
+		local code = 0
+		for len = 1, maxBits do
+			local b = readBits(1)
+			code = code * 2 + b
+			local t = tree[len]
+			if t and t[code] ~= nil then
+				return t[code]
+			end
+		end
+		return 256
+	end
+
+	local lenBase = {
+		3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,
+		35,43,51,59,67,83,99,115,131,163,195,227,258
+	}
+	local lenExtra = {
+		0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,
+		3,3,3,3,4,4,4,4,5,5,5,5,0
+	}
+	local distBase = {
+		1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,
+		257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577
+	}
+	local distExtra = {
+		0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,
+		7,7,8,8,9,9,10,10,11,11,12,12,13,13
+	}
+	local clOrder = {16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15}
+
+	local out = {}
+	local outLen = 0
+
+	repeat
+		local bfinal = readBits(1)
+		local btype = readBits(2)
+
+		if btype == 0 then
+			bitBuf = 0
+			bitCnt = 0
+			if pos + 3 > dataLen then break end
+			local b1, b2 = string.byte(idat, pos, pos + 1)
+			local len = b1 + b2 * 256
+			pos += 4
+			for i = 1, len do
+				outLen += 1
+				out[outLen] = string.byte(idat, pos) or 0
+				pos += 1
+			end
+		elseif btype == 1 or btype == 2 then
+			local litTree, litMax, distTree, distMax
+
+			if btype == 1 then
+				local litLens = {}
+				for i = 0, 143 do litLens[i] = 8 end
+				for i = 144, 255 do litLens[i] = 9 end
+				for i = 256, 279 do litLens[i] = 7 end
+				for i = 280, 287 do litLens[i] = 8 end
+				local distLens = {}
+				for i = 0, 31 do distLens[i] = 5 end
+				litTree, litMax = buildHuffman(litLens, 287)
+				distTree, distMax = buildHuffman(distLens, 31)
+			else
+				local hlit = readBits(5) + 257
+				local hdist = readBits(5) + 1
+				local hclen = readBits(4) + 4
+				local clLens = {}
+				for i = 1, hclen do
+					clLens[clOrder[i]] = readBits(3)
+				end
+				local clTree, clMax = buildHuffman(clLens, 18)
+
+				local allLens = {}
+				local idx = 0
+				local totalCodes = hlit + hdist
+				while idx < totalCodes do
+					local s = decodeSym(clTree, clMax)
+					if s < 16 then
+						allLens[idx] = s
+						idx += 1
+					elseif s == 16 then
+						local rep = readBits(2) + 3
+						local prev = allLens[idx - 1] or 0
+						for _ = 1, rep do allLens[idx] = prev; idx += 1 end
+					elseif s == 17 then
+						local rep = readBits(3) + 3
+						for _ = 1, rep do allLens[idx] = 0; idx += 1 end
+					elseif s == 18 then
+						local rep = readBits(7) + 11
+						for _ = 1, rep do allLens[idx] = 0; idx += 1 end
+					else
+						break
+					end
+				end
+
+				local litLens, distLens = {}, {}
+				for i = 0, hlit - 1 do litLens[i] = allLens[i] or 0 end
+				for i = 0, hdist - 1 do distLens[i] = allLens[hlit + i] or 0 end
+				litTree, litMax = buildHuffman(litLens, hlit - 1)
+				distTree, distMax = buildHuffman(distLens, hdist - 1)
+			end
+
+			while true do
+				local sym = decodeSym(litTree, litMax)
+				if sym == 256 then
+					break
+				elseif sym < 256 then
+					outLen += 1
+					out[outLen] = sym
+				else
+					local lIdx = sym - 256
+					local length = (lenBase[lIdx] or 3) + readBits(lenExtra[lIdx] or 0)
+					local dSym = decodeSym(distTree, distMax)
+					local dist = (distBase[dSym + 1] or 1) + readBits(distExtra[dSym + 1] or 0)
+					for _ = 1, length do
+						outLen += 1
+						out[outLen] = out[outLen - dist] or 0
+					end
+				end
+			end
+		else
+			break
+		end
+	until bfinal == 1 or pos > dataLen
+
+	return out
+end
+
+local function decodePNG(data)
+	if string.sub(data, 1, 8) ~= "\137PNG\r\n\26\n" then
+		return nil
+	end
+
+	local function readU32BE(offset)
+		local b1, b2, b3, b4 = string.byte(data, offset, offset + 3)
+		return ((b1 * 256 + b2) * 256 + b3) * 256 + b4
+	end
+
+	local pos = 9
+	local width, height, bitDepth, colorType
+	local palette = {}
+	local idatParts = {}
+
+	while pos <= #data do
+		local len = readU32BE(pos)
+		local cType = string.sub(data, pos + 4, pos + 7)
+		local cData = pos + 8
+		if cType == "IHDR" then
+			width = readU32BE(cData)
+			height = readU32BE(cData + 4)
+			bitDepth, colorType = string.byte(data, cData + 8, cData + 9)
+		elseif cType == "PLTE" then
+			for i = 0, math.floor(len / 3) - 1 do
+				local r, g, b = string.byte(data, cData + i * 3, cData + i * 3 + 2)
+				table.insert(palette, {r, g, b})
+			end
+		elseif cType == "IDAT" then
+			table.insert(idatParts, string.sub(data, cData, cData + len - 1))
+		elseif cType == "IEND" then
+			break
+		end
+		pos = cData + len + 4
+	end
+
+	if not width or not height or #idatParts == 0 then return nil end
+	local rawBytes = inflateZlib(table.concat(idatParts))
+	if not rawBytes or #rawBytes == 0 then return nil end
+
+	local bppMap = {[0] = 1, [2] = 3, [3] = 1, [4] = 2, [6] = 4}
+	local bpp = bppMap[colorType] or 3
+	local stride = width * bpp
+
+	local rowsRGB = {}
+	local prevRow = nil
+	local rPos = 1
+
+	for y = 1, height do
+		local fType = rawBytes[rPos] or 0
+		rPos += 1
+		local curRow = {}
+		for i = 1, stride do
+			local x = rawBytes[rPos] or 0
+			rPos += 1
+			local a = (i > bpp) and curRow[i - bpp] or 0
+			local b = prevRow and prevRow[i] or 0
+			local c = (prevRow and i > bpp) and prevRow[i - bpp] or 0
+			local val = x
+			if fType == 1 then
+				val = (x + a) % 256
+			elseif fType == 2 then
+				val = (x + b) % 256
+			elseif fType == 3 then
+				val = (x + math.floor((a + b) / 2)) % 256
+			elseif fType == 4 then
+				local p = a + b - c
+				local pa, pb, pc = math.abs(p - a), math.abs(p - b), math.abs(p - c)
+				local pr = (pa <= pb and pa <= pc) and a or ((pb <= pc) and b or c)
+				val = (x + pr) % 256
+			end
+			curRow[i] = val
+		end
+		prevRow = curRow
+		rowsRGB[y] = curRow
+	end
+
+	local scale = math.min(1, GRID_SIZE / math.max(width, height))
+	local cols = math.max(1, math.floor(width * scale))
+	local rows = math.max(1, math.floor(height * scale))
+
+	local pixels = {}
+	for r = 1, rows do
+		local srcY = math.clamp(math.floor((rows - r) / rows * height) + 1, 1, height)
+		local rowData = rowsRGB[srcY]
+		for c = 1, cols do
+			local srcX = math.clamp(math.floor((c - 1) / cols * width) + 1, 1, width)
+			local idx = (srcX - 1) * bpp + 1
+			local rCol, gCol, bCol, alpha = 0, 0, 0, 255
+			if colorType == 2 then
+				rCol, gCol, bCol = rowData[idx] or 0, rowData[idx + 1] or 0, rowData[idx + 2] or 0
+			elseif colorType == 6 then
+				rCol, gCol, bCol, alpha = rowData[idx] or 0, rowData[idx + 1] or 0, rowData[idx + 2] or 0, rowData[idx + 3] or 255
+			elseif colorType == 3 then
+				local p = palette[(rowData[idx] or 0) + 1] or {0, 0, 0}
+				rCol, gCol, bCol = p[1], p[2], p[3]
+			elseif colorType == 0 then
+				local v = rowData[idx] or 0
+				rCol, gCol, bCol = v, v, v
+			elseif colorType == 4 then
+				local v = rowData[idx] or 0
+				rCol, gCol, bCol, alpha = v, v, v, rowData[idx + 1] or 255
+			end
+
+			if alpha > 30 then
+				table.insert(pixels, {
+					GridX = c,
+					GridY = r,
+					Color = Color3.fromRGB(rCol, gCol, bCol)
+				})
+			end
+		end
+	end
+
+	return pixels, cols, rows
+end
+
+-- ==========================================
+-- 2. ПРЯМОЙ ДЕКОДЕР JPEG (.JPG)
+-- ==========================================
+local function decodeJPEG(data)
+	if string.byte(data, 1) ~= 0xFF or string.byte(data, 2) ~= 0xD8 then
+		return nil
+	end
+
+	local qTables, dcTables, acTables = {}, {}, {}
+	local components, compById = {}, {}
+	local width, height, numComp = 0, 0, 0
+	local maxH, maxV = 1, 1
+	local restartInterval = 0
+	local pos = 3
+	local dataLen = #data
+
+	local function readU16(off)
+		local b1, b2 = string.byte(data, off, off + 1)
+		return (b1 or 0) * 256 + (b2 or 0)
+	end
+
+	while pos <= dataLen do
+		if string.byte(data, pos) ~= 0xFF then
+			pos += 1
+		else
+			while pos <= dataLen and string.byte(data, pos) == 0xFF do pos += 1 end
+			if pos > dataLen then break end
+			local marker = string.byte(data, pos)
+			pos += 1
+
+			if marker == 0xD9 then
+				break
+			elseif marker ~= 0x00 and marker ~= 0x01 and not (marker >= 0xD0 and marker <= 0xD8) then
+				if pos + 1 > dataLen then break end
+				local segLen = readU16(pos)
+				local segStart = pos + 2
+				local segEnd = pos + segLen
+
+				if marker == 0xDB then
+					local p = segStart
+					while p < segEnd do
+						local info = string.byte(data, p); p += 1
+						local prec = math.floor(info / 16)
+						local qId = info % 16
+						local qTab = {}
+						for i = 1, 64 do
+							if prec == 0 then qTab[i] = string.byte(data, p); p += 1
+							else qTab[i] = readU16(p); p += 2 end
+						end
+						qTables[qId] = qTab
+					end
+				elseif marker == 0xC0 or marker == 0xC1 or marker == 0xC2 then
+					height = readU16(segStart + 1)
+					width = readU16(segStart + 3)
+					numComp = string.byte(data, segStart + 5)
+					local p = segStart + 6
+					maxH, maxV = 1, 1
+					components, compById = {}, {}
+					for i = 1, numComp do
+						local id, samp, qId = string.byte(data, p, p + 2); p += 3
+						local h, v = math.floor(samp / 16), samp % 16
+						if h > maxH then maxH = h end
+						if v > maxV then maxV = v end
+						local comp = { id = id, H = h, V = v, qId = qId, prevDC = 0, blocks = {} }
+						components[i] = comp
+						compById[id] = comp
+					end
+				elseif marker == 0xC4 then
+					local p = segStart
+					while p < segEnd do
+						local info = string.byte(data, p); p += 1
+						local tc, th = math.floor(info / 16), info % 16
+						local counts = {}
+						for i = 1, 16 do counts[i] = string.byte(data, p); p += 1 end
+						local tree, code = {}, 0
+						for len = 1, 16 do
+							local row = {}
+							for i = 1, counts[len] do
+								row[code] = string.byte(data, p); p += 1
+								code += 1
+							end
+							tree[len] = row
+							code *= 2
+						end
+						if tc == 0 then dcTables[th] = tree else acTables[th] = tree end
+					end
+				elseif marker == 0xDD then
+					restartInterval = readU16(segStart)
+				elseif marker == 0xDA then
+					local nScan = string.byte(data, segStart)
+					local p = segStart + 1
+					local scanComps = {}
+					for i = 1, nScan do
+						local cId, tdta = string.byte(data, p, p + 1); p += 2
+						local comp = compById[cId]
+						if comp then
+							comp.dcId = math.floor(tdta / 16)
+							comp.acId = tdta % 16
+							table.insert(scanComps, comp)
+						end
+					end
+					local ss, se, ahal = string.byte(data, p, p + 2)
+					local ah = math.floor((ahal or 0) / 16)
+					local al = (ahal or 0) % 16
+
+					local bitPos = segEnd
+					local bitBuf, bitCount = 0, 0
+
+					if ss == 0 and ah == 0 then
+						local function nextByte()
+							if bitPos > dataLen then return nil end
+							local b = string.byte(data, bitPos); bitPos += 1
+							if b == 0xFF then
+								while bitPos <= dataLen and string.byte(data, bitPos) == 0xFF do bitPos += 1 end
+								if bitPos > dataLen then return nil end
+								local b2 = string.byte(data, bitPos); bitPos += 1
+								if b2 == 0x00 then return 0xFF
+								elseif b2 >= 0xD0 and b2 <= 0xD7 then
+									for _, c in ipairs(components) do c.prevDC = 0 end
+									bitCount = 0; bitBuf = 0
+									return nextByte()
+								else
+									bitPos -= 2
+									return nil
+								end
+							end
+							return b
+						end
+
+						local function readBit()
+							if bitCount == 0 then
+								local b = nextByte()
+								if not b then return nil end
+								bitBuf = b; bitCount = 8
+							end
+							bitCount -= 1
+							local w = 2 ^ bitCount
+							local bit = math.floor(bitBuf / w)
+							bitBuf = bitBuf % w
+							return bit
+						end
+
+						local function recvExt(sz)
+							if sz == 0 then return 0 end
+							local v = 0
+							for _ = 1, sz do
+								local b = readBit()
+								if not b then return 0 end
+								v = v * 2 + b
+							end
+							if v < 2 ^ (sz - 1) then v = v - (2 ^ sz - 1) end
+							return v
+						end
+
+						local function decHuff(tree)
+							if not tree then return nil end
+							local code = 0
+							for len = 1, 16 do
+								local b = readBit()
+								if not b then return nil end
+								code = code * 2 + b
+								local s = tree[len] and tree[len][code]
+								if s ~= nil then return s end
+							end
+							return nil
+						end
+
+						local function checkRestart()
+							bitCount = 0; bitBuf = 0
+							local savePos = bitPos
+							if bitPos <= dataLen and string.byte(data, bitPos) == 0xFF then
+								while bitPos <= dataLen and string.byte(data, bitPos) == 0xFF do bitPos += 1 end
+								local m = string.byte(data, bitPos)
+								if m and m >= 0xD0 and m <= 0xD7 then
+									bitPos += 1
+								else
+									bitPos = savePos
+								end
+							end
+							for _, c in ipairs(components) do c.prevDC = 0 end
+						end
+
+						for _, c in ipairs(scanComps) do c.prevDC = 0 end
+
+						local function decBlock(comp, by, bx)
+							local dcSym = decHuff(dcTables[comp.dcId])
+							if not dcSym then return false end
+							comp.prevDC += recvExt(dcSym)
+							local qTab = qTables[comp.qId]
+							local q1 = (qTab and qTab[1]) or 1
+							local dcVal = (comp.prevDC * (2 ^ al) * q1) / 8 + 128
+
+							if se > 0 then
+								local k = 2
+								local acTree = acTables[comp.acId]
+								while k <= 64 do
+									local rs = decHuff(acTree)
+									if not rs or rs == 0 then break end
+									if rs == 0xF0 then
+										k += 16
+									else
+										local run = math.floor(rs / 16)
+										local sz = rs % 16
+										k += run
+										recvExt(sz)
+										k += 1
+									end
+								end
+							end
+							if not comp.blocks[by] then comp.blocks[by] = {} end
+							comp.blocks[by][bx] = dcVal
+							return true
+						end
+
+						local mcuCnt = 0
+						if nScan == 1 then
+							local c = scanComps[1]
+							local bw = math.ceil(math.ceil(width * c.H / maxH) / 8)
+							local bh = math.ceil(math.ceil(height * c.V / maxV) / 8)
+							for by = 1, bh do
+								for bx = 1, bw do
+									if not decBlock(c, by, bx) then break end
+									mcuCnt += 1
+									if restartInterval > 0 and mcuCnt % restartInterval == 0 then checkRestart() end
+								end
+								if by % 20 == 0 then task.wait() end
+							end
+						else
+							local mcuCols = math.ceil(width / (8 * maxH))
+							local mcuRows = math.ceil(height / (8 * maxV))
+							for my = 0, mcuRows - 1 do
+								for mx = 0, mcuCols - 1 do
+									for _, c in ipairs(scanComps) do
+										for v = 0, c.V - 1 do
+											for h = 0, c.H - 1 do
+												decBlock(c, my * c.V + v + 1, mx * c.H + h + 1)
+											end
+										end
+									end
+									mcuCnt += 1
+									if restartInterval > 0 and mcuCnt % restartInterval == 0 then checkRestart() end
+								end
+								if my % 15 == 0 then task.wait() end
+							end
+							break -- Для сетки блоков первого полного прохода достаточно
+						end
+					end
+
+					while bitPos <= dataLen do
+						if string.byte(data, bitPos) == 0xFF then
+							local b2 = string.byte(data, bitPos + 1)
+							if b2 and b2 ~= 0x00 and b2 ~= 0xFF and not (b2 >= 0xD0 and b2 <= 0xD7) then
+								break
+							end
+						end
+						bitPos += 1
+					end
+					pos = bitPos
+				else
+					pos = segEnd
+				end
+			end
+		end
+	end
+
+	if width == 0 or height == 0 or #components == 0 then return nil end
+
+	local scale = math.min(1, GRID_SIZE / math.max(width, height))
+	local cols = math.max(1, math.floor(width * scale))
+	local rows = math.max(1, math.floor(height * scale))
+
+	local function getSample(comp, px, py)
+		if not comp then return 128 end
+		local bx = math.floor((px * comp.H / maxH) / 8) + 1
+		local by = math.floor((py * comp.V / maxV) / 8) + 1
+		return (comp.blocks[by] and comp.blocks[by][bx]) or 128
+	end
+
+	local pixels = {}
+	for r = 1, rows do
+		local py = math.floor((rows - r + 0.5) / rows * height)
+		for c = 1, cols do
+			local px = math.floor((c - 0.5) / cols * width)
+			local Y = getSample(components[1], px, py)
+			local rCol, gCol, bCol = Y, Y, Y
+			if numComp >= 3 then
+				local Cb = getSample(components[2], px, py) - 128
+				local Cr = getSample(components[3], px, py) - 128
+				rCol = Y + 1.402 * Cr
+				gCol = Y - 0.34414 * Cb - 0.71414 * Cr
+				bCol = Y + 1.772 * Cb
+			end
+			table.insert(pixels, {
+				GridX = c,
+				GridY = r,
+				Color = Color3.fromRGB(
+					math.clamp(math.floor(rCol + 0.5), 0, 255),
+					math.clamp(math.floor(gCol + 0.5), 0, 255),
+					math.clamp(math.floor(bCol + 0.5), 0, 255)
+				)
+			})
+		end
+	end
+
+	return pixels, cols, rows
+end
+
+-- Загрузка и разбор пикселей без EditableImage
+local function loadPixelsUniversal(url)
+	statusLabel.Text = "1/4: Скачиваю и сжимаю под сетку..."
+
+	-- Сначала пробуем получить уже сжатый PNG под размер GRID_SIZE (мгновенно)
+	local encoded = HttpService:UrlEncode(url)
+	local proxyUrl = "https://images.weserv.nl/?url=" .. encoded
+		.. "&w=" .. tostring(GRID_SIZE)
+		.. "&h=" .. tostring(GRID_SIZE)
+		.. "&fit=contain&output=png"
+
+	local proxyBytes = httpFetch(proxyUrl)
+	if proxyBytes and string.sub(proxyBytes, 1, 8) == "\137PNG\r\n\26\n" then
+		statusLabel.Text = "2/4: Декодирую цвета PNG..."
+		task.wait()
+		local px, c, r = decodePNG(proxyBytes)
+		if px and #px > 0 then return px, c, r end
+	end
+
+	-- Если прокси недоступен, качаем напрямую по ссылке
+	statusLabel.Text = "1/4: Прямое скачивание файла..."
+	local rawBytes = httpFetch(url)
+	if not rawBytes then
+		return nil, "Ошибка: не удалось скачать фото по ссылке"
+	end
+
+	statusLabel.Text = "2/4: Разбираю пиксели напрямую..."
+	task.wait()
+
+	if string.sub(rawBytes, 1, 8) == "\137PNG\r\n\26\n" then
+		local px, c, r = decodePNG(rawBytes)
+		if px then return px, c, r end
+	elseif string.byte(rawBytes, 1) == 0xFF and string.byte(rawBytes, 2) == 0xD8 then
+		local px, c, r = decodeJPEG(rawBytes)
+		if px then return px, c, r end
+	end
+
+	return nil, "Ошибка: неподдерживаемый формат файла"
+end
+
+-- Поиск базы игрока
+local function getPlayerZone()
+	local teamColor = player.TeamColor
+	for _, v in ipairs(workspace:GetChildren()) do
+		local tc = v:FindFirstChild("TeamColor")
+		if tc and tc.Value == teamColor then
+			return v
+		end
+	end
+	return nil
+end
+
+local function getBlocksContainer(zone)
+	if workspace:FindFirstChild("Blocks") and workspace.Blocks:FindFirstChild(player.Name) then
+		return workspace.Blocks[player.Name]
+	end
+	if zone and zone:FindFirstChild("Blocks") then
+		return zone.Blocks
+	end
+	return workspace
+end
+
+local function hasTool(toolName)
+	local char = player.Character
+	return (char and char:FindFirstChild(toolName) ~= nil)
+		or (player.Backpack:FindFirstChild(toolName) ~= nil)
+end
+
+local function equipTool(toolName)
+	local char = player.Character
+	if not char then return nil end
+	if char:FindFirstChild(toolName) then return char[toolName] end
+
+	local bpTool = player.Backpack:FindFirstChild(toolName)
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if bpTool and hum then
+		hum:EquipTool(bpTool)
+		local t0 = tick()
+		while not char:FindFirstChild(toolName) and tick() - t0 < 1.5 do
+			task.wait()
+		end
+		return char:FindFirstChild(toolName)
+	end
+	return nil
+end
+
+local function getAvailableBlocksPool()
+	local pool = {}
+	local totalAvailable = 0
+
+	for _, name in ipairs(BLOCK_PRIORITY) do
+		local valObj = blockData:FindFirstChild(name)
+		if valObj and valObj.Value > 0 then
+			table.insert(pool, { Name = name, Total = valObj.Value, Used = 0 })
+			totalAvailable += valObj.Value
+		end
+	end
+
+	for _, child in ipairs(blockData:GetChildren()) do
+		if child:IsA("IntValue") and string.find(child.Name, "Block") and child.Value > 0 then
+			local exists = false
+			for _, item in ipairs(pool) do
+				if item.Name == child.Name then exists = true; break end
+			end
+			if not exists then
+				table.insert(pool, { Name = child.Name, Total = child.Value, Used = 0 })
+				totalAvailable += child.Value
+			end
+		end
+	end
+
+	return pool, totalAvailable
+end
+
+local function startServerBuild()
+	if isBuilding then return end
+	local url = urlBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+	if url == "" then
+		statusLabel.Text = "Сначала вставь ссылку!"
+		return
+	end
+
+	local zone = getPlayerZone()
+	if not zone then
+		statusLabel.Text = "Ошибка: не найден участок твоей команды!"
+		return
+	end
+
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then return end
+
+	isBuilding = true
+
+	local pixels, colsOrErr, rows = loadPixelsUniversal(url)
+	if not pixels then
+		statusLabel.Text = tostring(colsOrErr)
+		isBuilding = false
+		return
+	end
+
+	local cols = colsOrErr
+	local pool, totalOwned = getAvailableBlocksPool()
+	if totalOwned == 0 then
+		statusLabel.Text = "В инвентаре нет строительных блоков!"
+		isBuilding = false
+		return
+	end
+
+	local buildTool = equipTool("BuildingTool")
+	if not buildTool or not buildTool:FindFirstChild("RF") then
+		statusLabel.Text = "Ошибка: Молоток (BuildingTool) не найден!"
+		isBuilding = false
+		return
+	end
+
+	-- Проверяем, есть ли реально рулетка (ScalingTool) у игрока
+	local canScale = USE_SCALING and hasTool("ScalingTool")
+	if USE_SCALING and not canScale then
+		statusLabel.Text = "Рулетки нет в инвентаре — строю блоками 2x2..."
+		task.wait(1)
+	end
+
+	local step = canScale and 1 or 2
+	local originPos = root.Position + root.CFrame.LookVector * 14 + Vector3.new(0, 2, 0)
+	local startX = math.floor(originPos.X)
+	local startY = math.max(math.floor(zone.Position.Y + 4), math.floor(originPos.Y))
+	local startZ = math.floor(originPos.Z)
+
+	local offsetX = (cols * step) / 2
+	local expectedBlocks = {}
+	local directModels = {}
+	local poolIdx = 1
+
+	statusLabel.Text = "3/4: Ставлю блоки на сервере (0/" .. #pixels .. ")..."
+
+	for i, px in ipairs(pixels) do
+		if not isBuilding then break end
+
+		while poolIdx <= #pool and pool[poolIdx].Used >= pool[poolIdx].Total do
+			poolIdx += 1
+		end
+		if poolIdx > #pool then
+			statusLabel.Text = "Блоки закончились! Перехожу к покраске..."
+			break
+		end
+
+		local currentBlock = pool[poolIdx]
+		currentBlock.Used += 1
+
+		if not player.Character:FindFirstChild("BuildingTool") then
+			buildTool = equipTool("BuildingTool")
+		end
+
+		local worldPos = Vector3.new(
+			startX + (px.GridX - 1) * step - offsetX,
+			startY + (px.GridY - 1) * step,
+			startZ
+		)
+		local worldCF = CFrame.new(worldPos)
+		local relCF = zone.CFrame:ToObjectSpace(worldCF)
+
+		table.insert(expectedBlocks, {
+			Name = currentBlock.Name,
+			WorldCF = worldCF,
+			Color = px.Color
+		})
+
+		task.spawn(function()
+			local liveCount = blockData:FindFirstChild(currentBlock.Name)
+				and blockData[currentBlock.Name].Value or currentBlock.Total
+
+			-- Пробуем основной и запасной формат вызова BABFT
+			local ok, res = pcall(function()
+				return buildTool.RF:InvokeServer(
+					currentBlock.Name,
+					liveCount,
+					zone,
+					relCF,
+					true,
+					1,
+					worldCF,
+					false
+				)
+			end)
+
+			if not ok or not res then
+				ok, res = pcall(function()
+					return buildTool.RF:InvokeServer(
+						currentBlock.Name,
+						liveCount,
+						zone,
+						relCF,
+						true,
+						worldCF,
+						false
+					)
+				end)
+			end
+
+			if typeof(res) == "Instance" and res:IsA("Model") then
+				table.insert(directModels, {
+					Model = res,
+					Color = px.Color,
+					WorldCF = worldCF
+				})
+			end
+		end)
+
+		if i % 6 == 0 then
+			statusLabel.Text = "3/4: Ставлю блоки (" .. i .. "/" .. #pixels .. ")..."
+			task.wait(0.06)
+		end
+	end
+
+	if not isBuilding then
+		statusLabel.Text = "Постройка остановлена"
+		return
+	end
+
+	statusLabel.Text = "Ждем синхронизации с сервером (1.5 сек)..."
+	task.wait(1.5)
+
+	local matchedBlocks = directModels
+	if #matchedBlocks < #expectedBlocks * 0.5 then
+		matchedBlocks = {}
+		local container = getBlocksContainer(zone)
+		local placedCandidates = {}
+		for _, obj in ipairs(container:GetDescendants()) do
+			if obj.Name == "PPart" and obj:IsA("BasePart") and obj.Parent:IsA("Model") then
+				table.insert(placedCandidates, obj.Parent)
+			end
+		end
+
+		local usedModels = {}
+		for _, exp in ipairs(expectedBlocks) do
+			local bestModel, bestDist = nil, 6
+			for _, mdl in ipairs(placedCandidates) do
+				if not usedModels[mdl] and mdl.Name == exp.Name and mdl:FindFirstChild("PPart") then
+					local d = (mdl.PPart.Position - exp.WorldCF.Position).Magnitude
+					if d < bestDist then
+						bestDist = d
+						bestModel = mdl
+					end
+				end
+			end
+			if bestModel then
+				usedModels[bestModel] = true
+				table.insert(matchedBlocks, {
+					Model = bestModel,
+					Color = exp.Color,
+					WorldCF = exp.WorldCF
+				})
+			end
+		end
+	end
+
+	if canScale and #matchedBlocks > 0 and isBuilding then
+		local scaleTool = equipTool("ScalingTool")
+		if scaleTool and scaleTool:FindFirstChild("RF") then
+			statusLabel.Text = "Сжимаю блоки до 1x1..."
+			for i, item in ipairs(matchedBlocks) do
+				if not isBuilding then break end
+				task.spawn(function()
+					pcall(function()
+						scaleTool.RF:InvokeServer(item.Model, Vector3.new(1, 1, 1), item.WorldCF)
+					end)
+				end)
+				if i % 8 == 0 then task.wait(0.05) end
+			end
+			task.wait(0.8)
+		end
+	end
+
+	if #matchedBlocks > 0 and isBuilding then
+		local paintTool = equipTool("PaintingTool")
+		if not paintTool or not paintTool:FindFirstChild("RF") then
+			statusLabel.Text = "Кисточка (PaintingTool) не найдена!"
+			isBuilding = false
+			return
+		end
+
+		statusLabel.Text = "4/4: Крашу блоки (" .. #matchedBlocks .. " шт.)..."
+		local batch = {}
+		for i, item in ipairs(matchedBlocks) do
+			if not isBuilding then break end
+			table.insert(batch, { item.Model, item.Color })
+
+			if #batch >= 25 or i == #matchedBlocks then
+				local sendBatch = batch
+				batch = {}
+				task.spawn(function()
+					pcall(function()
+						paintTool.RF:InvokeServer(sendBatch)
+					end)
+				end)
+				statusLabel.Text = "4/4: Покрашено " .. i .. "/" .. #matchedBlocks .. "..."
+				task.wait(0.08)
+			end
+		end
+	end
+
+	isBuilding = false
+	statusLabel.Text = "Готово! Построено и покрашено: " .. #matchedBlocks .. " блоков"
+end
+
+buildBtn.MouseButton1Click:Connect(function()
+	if not isBuilding then
+		task.spawn(startServerBuild)
+	end
+end)
+
+stopBtn.MouseButton1Click:Connect(function()
+	isBuilding = false
+	statusLabel.Text = "Остановка..."
+end)
